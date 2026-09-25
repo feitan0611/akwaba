@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Démo Baoulé / Dioula</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Démonstrateur Baoulé / Dioula</h1>
+      <p class="muted">Parlez en Baoulé ou en Dioula : le système détecte la langue et répond vocalement dans la même langue.</p>
+      <p id="engine-banner" class="banner" hidden></p>
+    </header>
+
+    <section class="card">
+      <h2>1. Votre question</h2>
+      <div class="row">
+        <button id="record-btn" type="button">🎙️ Enregistrer</button>
+        <span class="or">ou</span>
+        <label class="file">
+          <input id="file-input" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg">
+          Choisir un fichier .wav / .mp3
+        </label>
+      </div>
+      <audio id="input-audio" controls hidden></audio>
+      <div class="row">
+        <label for="hint">Indice de langue (moteur de test uniquement)</label>
+        <select id="hint">
+          <option value="">Automatique</option>
+          <option value="bci">Baoulé</option>
+          <option value="dyu">Dioula</option>
+        </select>
+      </div>
+      <button id="send-btn" type="button" class="primary" disabled>Envoyer</button>
+      <p id="status" class="muted" role="status"></p>
+    </section>
+
+    <section id="result" class="card" hidden>
+      <h2>2. Résultat</h2>
+      <dl>
+        <dt>Langue détectée</dt><dd id="r-lang"></dd>
+        <dt>Transcription</dt><dd id="r-text"></dd>
+        <dt>Question (langue pivot)</dt><dd id="r-qpivot"></dd>
+        <dt>Réponse (langue pivot)</dt><dd id="r-apivot"></dd>
+        <dt>Réponse (langue détectée)</dt><dd id="r-answer"></dd>
+      </dl>
+      <audio id="output-audio" controls></audio>
+      <p id="r-timings" class="muted small"></p>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

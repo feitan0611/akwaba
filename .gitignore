@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Secrets
+.env
+*.key
+
+# Données : l'audio brut n'est PAS versionné dans Git (taille + données personnelles).
+# Seuls les métadonnées et la documentation le sont. Voir data/README.md.
+data/raw/*
+data/interim/*
+data/processed/*
+!data/**/.gitkeep
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# Modèles / checkpoints
+models/
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+*.onnx
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Éditeurs / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

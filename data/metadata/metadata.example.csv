@@ -1,0 +1,5 @@
+id,audio_path,language,transcription,translation_fr,speaker_id,speaker_gender,speaker_age_range,dialect_variant,duration_s,source,license,consent,annotator,validated
+EXEMPLE-bci-0001,data/processed/bci/EXEMPLE-bci-0001.wav,bci,<transcription en baoulé selon la convention>,<traduction française>,bci-spk001,F,18-30,<région>,3.2,S01,accord-locuteur,oui,m1,oui
+EXEMPLE-bci-0002,data/processed/bci/EXEMPLE-bci-0002.wav,bci,<transcription en baoulé selon la convention>,<traduction française>,bci-spk002,M,31-50,<région>,2.7,S01,accord-locuteur,oui,m1,non
+EXEMPLE-dyu-0001,data/processed/dyu/EXEMPLE-dyu-0001.wav,dyu,<transcription en dioula selon la convention>,<traduction française>,dyu-spk001,M,18-30,<région>,4.1,S01,accord-locuteur,oui,m2,oui
+EXEMPLE-dyu-0002,data/processed/dyu/EXEMPLE-dyu-0002.wav,dyu,<transcription en dioula selon la convention>,<traduction française>,dyu-spk002,F,51+,<région>,2.9,S01,accord-locuteur,oui,m2,oui

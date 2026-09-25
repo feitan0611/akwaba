@@ -1,0 +1,6 @@
+# Fins de ligne homogènes (LF) quel que soit l'OS des membres de l'équipe
+* text=auto eol=lf
+*.wav binary
+*.mp3 binary
+*.png binary
+*.jpg binary
