@@ -17,7 +17,8 @@ def health(settings: Settings = Depends(get_app_settings), engines: Engines = De
         version=__version__,
         engine=settings.engine,
         pivot_language=settings.pivot_language,
-        models={brick.task: brick.name for brick in engines.bricks},
+        models={brick.task: brick.name for brick in engines.bricks}
+        | ({"embedding": engines.retriever.embedder.name} if engines.retriever else {}),
         capabilities=engines.capabilities(),
     )
 

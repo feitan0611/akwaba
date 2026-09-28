@@ -22,6 +22,9 @@ data/processed/*
 *.flac
 *.ogg
 
+# Index vectoriel du RAG : se reconstruit automatiquement depuis knowledge/
+data/rag_index/
+
 # Modèles / checkpoints
 models/
 checkpoints/

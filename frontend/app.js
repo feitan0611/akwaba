@@ -223,6 +223,12 @@ function renderBotAnswer(slot, answer, { autoplay }) {
     [
       [`Question (${LANG_NAMES[pivotLanguage]})`, answer.steps.questionPivot],
       [`Réponse (${LANG_NAMES[pivotLanguage]})`, answer.steps.answerPivot],
+      [
+        "Sources",
+        answer.sources?.length
+          ? answer.sources.map((src) => `${src.title}${src.section ? ` › ${src.section}` : ""} (${src.source})`).join(" · ")
+          : "aucune — réponse sans la base de connaissances",
+      ],
       ["Temps total", `${Math.round(total)} ms`],
     ].forEach(([k, v]) => dl.append(el("dt", "", k), el("dd", "", v)));
     details.append(dl);
@@ -266,6 +272,7 @@ async function sendVoice(blob, filename = "question.wav", { autoplay = settings.
         lang: d.language,
         audioBase64: r.answer_audio_base64,
         steps: { questionPivot: r.question_pivot, answerPivot: r.answer_pivot },
+        sources: r.sources,
         timings: r.timings_ms,
       },
       { autoplay },
@@ -310,6 +317,7 @@ async function sendText(text) {
         lang,
         audioBase64: speech.audio_base64,
         steps: { questionPivot: question.text, answerPivot: answer.text },
+        sources: answer.sources,
         timings,
       },
       { autoplay: settings.autoplay },

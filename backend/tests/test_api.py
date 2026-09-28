@@ -159,7 +159,7 @@ def test_pipeline(client, wav_bytes):
     assert body["detection"]["language"] == "dyu"
     assert body["pivot_language"] == "fra"
     assert base64.b64decode(body["answer_audio_base64"])[:4] == b"RIFF"
-    assert set(body["timings_ms"]) == {"detect", "translate_in", "ask", "translate_out", "speech"}
+    assert set(body["timings_ms"]) == {"detect", "translate_in", "retrieve", "ask", "translate_out", "speech"}
 
 
 def test_openapi_documents_both_audio_content_types(client):

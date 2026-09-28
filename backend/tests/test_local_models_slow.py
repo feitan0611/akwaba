@@ -24,7 +24,9 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def bricks():
-    from app.services.local import MMSSpeechRecognizer, MMSSpeechSynthesizer, NLLBTranslator
+    from app.services.local import MMSSpeechRecognizer, MMSSpeechSynthesizer, NLLBTranslator, configure_model_hub
+
+    configure_model_hub(offline=True)
 
     return NLLBTranslator(), MMSSpeechSynthesizer(), MMSSpeechRecognizer()
 

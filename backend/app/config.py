@@ -4,13 +4,20 @@ Aucun secret ne doit être écrit en dur dans le code : voir .env.example.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="LANGCI_", extra="ignore")
+    # .env à la racine du projet, quel que soit le dossier d'où le serveur est lancé.
+    # env_ignore_empty : « LANGCI_X= » (valeur vide) signifie « valeur par défaut », pas une chaîne vide.
+    model_config = SettingsConfigDict(
+        env_file=PROJECT_ROOT / ".env", env_prefix="LANGCI_", extra="ignore", env_ignore_empty=True
+    )
 
     app_name: str = "API Langues Ivoiriennes (Baoulé / Dioula)"
     environment: str = "dev"
@@ -24,9 +31,24 @@ class Settings(BaseSettings):
     # première requête. Le premier chargement peut prendre plusieurs minutes.
     preload_models: bool = False
 
+    # Moteur local : charger les modèles depuis le cache local, sans contacter Hugging Face.
+    # Plus rapide et plus fiable (certains antivirus bloquent ces requêtes, ce qui figeait le
+    # chargement). Les modèles doivent alors être téléchargés avant : python -m app.download_models
+    models_offline: bool = True
+
     # LLM servi par Ollama (moteur local)
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:3b"
+
+    # RAG : base de connaissances interrogée avant chaque réponse du LLM (voir knowledge/README.md)
+    rag_enabled: bool = True
+    knowledge_dir: Path = PROJECT_ROOT / "knowledge"
+    rag_index_dir: Path = PROJECT_ROOT / "data" / "rag_index"
+    # Modèle d'embedding servi par Ollama (moteur local). Le moteur mock utilise un embedding lexical.
+    embedding_model: str = "bge-m3"
+    rag_top_k: int = 3
+    # Score de similarité minimal d'un passage ; vide = valeur par défaut du modèle d'embedding.
+    rag_min_score: float | None = None
 
     # Langue pivot utilisée par le LLM (le LLM ne comprend pas le Baoulé/Dioula directement).
     pivot_language: Literal["fra", "eng"] = "fra"

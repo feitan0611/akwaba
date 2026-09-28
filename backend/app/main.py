@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from app import __version__
 from app.config import Settings, get_settings
 from app.errors import register_error_handlers
-from app.routers import ask, detect, health, pipeline, speech, translate
+from app.routers import ask, detect, health, knowledge, pipeline, speech, translate
 from app.services.registry import build_engines
 
 API_PREFIX = "/api/v1"
@@ -64,7 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     register_error_handlers(app)
 
-    for module in (health, detect, translate, ask, speech, pipeline):
+    for module in (health, detect, translate, ask, speech, pipeline, knowledge):
         app.include_router(module.router, prefix=API_PREFIX)
 
     if settings.serve_demo and FRONTEND_DIR.is_dir():

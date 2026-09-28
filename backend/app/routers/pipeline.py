@@ -13,7 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.audio import AUDIO_REQUEST_BODY, read_audio_input
 from app.config import Settings
 from app.deps import get_app_settings, get_engines
-from app.schemas import DetectResponse, PipelineResponse
+from app.schemas import DetectResponse, PipelineResponse, SourceInfo
 from app.services.registry import Engines
 
 router = APIRouter(tags=["Pipeline"])
@@ -45,7 +45,8 @@ async def pipeline(
     question_pivot = await _timed(
         timings, "translate_in", engines.translator.translate, detected.text, detected.language, pivot
     )
-    answer_pivot = await _timed(timings, "ask", engines.responder.answer, question_pivot, pivot)
+    passages = await _timed(timings, "retrieve", engines.retrieve, question_pivot)
+    answer_pivot = await _timed(timings, "ask", engines.responder.answer, question_pivot, pivot, passages)
     answer_text = await _timed(
         timings, "translate_out", engines.translator.translate, answer_pivot, pivot, detected.language
     )
@@ -66,5 +67,6 @@ async def pipeline(
         answer_pivot=answer_pivot,
         answer_text=answer_text,
         answer_audio_base64=base64.b64encode(wav).decode("ascii"),
+        sources=[SourceInfo.model_validate(p, from_attributes=True) for p in passages],
         timings_ms=timings,
     )

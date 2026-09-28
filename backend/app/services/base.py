@@ -13,11 +13,15 @@ dans un pool de threads.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from app.audio import AudioInput
 from app.languages import ALL_LANGUAGES
+
+if TYPE_CHECKING:
+    from app.rag.index import Passage
 
 TASK_NAMES = {
     "stt": "la reconnaissance vocale",
@@ -105,12 +109,16 @@ class Translator(Brick):
 
 
 class Responder(Brick):
-    """Génération de la réponse à une requête, en langue pivot (endpoint /ask)."""
+    """Génération de la réponse à une requête, en langue pivot (endpoint /ask).
+
+    `passages` : extraits de la base de connaissances retrouvés par le RAG (éventuellement
+    aucun). La réponse doit s'appuyer dessus quand ils sont pertinents.
+    """
 
     task = "ask"
 
     @abstractmethod
-    def answer(self, question: str, language: str) -> str: ...
+    def answer(self, question: str, language: str, passages: Sequence["Passage"] = ()) -> str: ...
 
 
 class SpeechSynthesizer(Brick):

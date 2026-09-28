@@ -21,6 +21,7 @@ Les licences CC-BY-NC-4.0 interdisent tout usage commercial.
 
 import io
 import logging
+import os
 import threading
 from collections.abc import Callable
 from math import gcd
@@ -58,6 +59,28 @@ def use_system_certificates() -> None:
 
 
 use_system_certificates()
+
+
+def configure_model_hub(offline: bool) -> None:
+    """Mode hors ligne : les modèles sont lus dans le cache local, sans requête réseau.
+
+    Doit être appelé avant le premier import de transformers/huggingface_hub, qui lisent
+    cette variable au chargement (c'est le cas : ils ne sont importés qu'au premier usage).
+    """
+    if offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+
+
+def load_pretrained(loader: Callable[[], Any], model_id: str) -> Any:
+    """Appelle from_pretrained en transformant « modèle absent du cache » en message utile."""
+    try:
+        return loader()
+    except OSError as exc:
+        raise EngineUnavailableError(
+            f"Modèle {model_id} introuvable dans le cache local. Téléchargez les modèles avec : "
+            "cd backend && python -m app.download_models"
+        ) from exc
+
 
 SAMPLE_RATE = 16_000
 MIN_AUDIO_S = 0.3
@@ -129,9 +152,14 @@ class MMSSpeechRecognizer(SpeechRecognizer):
     def _load(self):
         from transformers import AutoProcessor, Wav2Vec2ForCTC
 
-        # target_lang ne télécharge que l'adaptateur de la langue (quelques Mo) en plus du modèle de base.
-        processor = AutoProcessor.from_pretrained(self.model_id, target_lang="dyu")
-        model = Wav2Vec2ForCTC.from_pretrained(self.model_id, target_lang="dyu", ignore_mismatched_sizes=True)
+        # target_lang ne charge que l'adaptateur de la langue (quelques Mo) en plus du modèle de base.
+        processor = load_pretrained(
+            lambda: AutoProcessor.from_pretrained(self.model_id, target_lang="dyu"), self.model_id
+        )
+        model = load_pretrained(
+            lambda: Wav2Vec2ForCTC.from_pretrained(self.model_id, target_lang="dyu", ignore_mismatched_sizes=True),
+            self.model_id,
+        )
         return processor, model.eval()
 
     def warmup(self) -> None:
@@ -174,10 +202,12 @@ class NLLBTranslator(Translator):
     def _load(self):
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(self.model_id)
+        tokenizer = load_pretrained(lambda: AutoTokenizer.from_pretrained(self.model_id), self.model_id)
         # Ce dépôt ne publie que pytorch_model.bin : use_safetensors=False évite que transformers
         # ne tente de récupérer en plus une conversion safetensors (2,3 Go de téléchargement inutile).
-        model = AutoModelForSeq2SeqLM.from_pretrained(self.model_id, use_safetensors=False)
+        model = load_pretrained(
+            lambda: AutoModelForSeq2SeqLM.from_pretrained(self.model_id, use_safetensors=False), self.model_id
+        )
         return tokenizer, model.eval()
 
     def warmup(self) -> None:
@@ -196,7 +226,7 @@ class NLLBTranslator(Translator):
             output = model.generate(
                 **inputs,
                 forced_bos_token_id=tokenizer.convert_tokens_to_ids(NLLB_CODES[target]),
-                max_new_tokens=256,
+                max_length=256,  # remplace la valeur (200) de generation_config, sans conflit d'options
                 num_beams=4,
             )
         return tokenizer.batch_decode(output, skip_special_tokens=True)[0].strip()
@@ -210,8 +240,18 @@ SYSTEM_PROMPT = (
     "en une à trois phrases courtes et simples, sans liste, sans emoji ni mise en forme : "
     "ta réponse sera traduite automatiquement dans une langue locale puis lue à voix haute. "
     "Si tu ne connais pas une information locale précise (prix, lieux, horaires), "
-    "dis-le honnêtement et donne un conseil utile."
+    "dis-le honnêtement et donne un conseil utile. "
+    "Quand des extraits de la base de connaissances Akwaba sont fournis, appuie-toi en priorité "
+    "sur eux et n'invente rien qui les contredise ; s'ils ne permettent pas de répondre, dis-le."
 )
+
+
+def format_question(question: str, passages) -> str:
+    """Question + extraits numérotés de la base de connaissances (s'il y en a)."""
+    if not passages:
+        return question
+    extracts = "\n\n".join(f"[{i}] {p.text}" for i, p in enumerate(passages, start=1))
+    return f"Extraits de la base de connaissances :\n{extracts}\n\nQuestion : {question}"
 
 
 class OllamaResponder(Responder):
@@ -223,7 +263,7 @@ class OllamaResponder(Responder):
         self.timeout_s = timeout_s
         self.name = f"ollama:{model}"
 
-    def answer(self, question: str, language: str) -> str:
+    def answer(self, question: str, language: str, passages=()) -> str:
         self.check_language(language)
         import httpx
 
@@ -232,7 +272,7 @@ class OllamaResponder(Responder):
             "stream": False,
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT.format(language=ALL_LANGUAGES[language].lower())},
-                {"role": "user", "content": question},
+                {"role": "user", "content": format_question(question, passages)},
             ],
             "options": {"temperature": 0.3, "num_predict": 160},
         }
@@ -266,7 +306,8 @@ class MMSSpeechSynthesizer(SpeechSynthesizer):
     def _load(model_id: str):
         from transformers import AutoTokenizer, VitsModel
 
-        return AutoTokenizer.from_pretrained(model_id), VitsModel.from_pretrained(model_id).eval()
+        tokenizer = load_pretrained(lambda: AutoTokenizer.from_pretrained(model_id), model_id)
+        return tokenizer, load_pretrained(lambda: VitsModel.from_pretrained(model_id), model_id).eval()
 
     def warmup(self) -> None:
         for model in self._models.values():

@@ -27,6 +27,7 @@ def _error_body(code: str, message: str, details: list | None = None) -> dict:
 
 def register_error_handlers(app: FastAPI) -> None:
     # Import local : app.services.base dépend (via app.audio) de ce module.
+    from app.rag.documents import KnowledgeBaseError
     from app.services.base import (
         EngineError,
         EngineUnavailableError,
@@ -41,6 +42,8 @@ def register_error_handlers(app: FastAPI) -> None:
         (LanguageRequiredError, 422, "language_required"),
         (InvalidInputError, 400, "invalid_input"),
         (EngineUnavailableError, 503, "engine_unavailable"),
+        # Document mal formé dans knowledge/ : le message nomme le fichier à corriger.
+        (KnowledgeBaseError, 500, "knowledge_base_error"),
     ]
 
     @app.exception_handler(EngineError)

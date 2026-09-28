@@ -67,6 +67,49 @@ class TranslateResponse(BaseModel):
     engine: str
 
 
+class SourceInfo(BaseModel):
+    """Passage de la base de connaissances utilisé pour répondre."""
+
+    doc_id: str = Field(description="Fichier de la base de connaissances (knowledge/)")
+    title: str
+    section: str
+    source: str = Field(description="Origine de l'information")
+    score: float = Field(description="Similarité avec la question (cosinus)")
+
+
+class SearchResult(SourceInfo):
+    text: str
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: Text
+    top_k: int = Field(default=5, ge=1, le=20)
+    min_score: float | None = Field(
+        default=None, description="Seuil de pertinence ; vide = seuil du serveur ; -1 = tout afficher"
+    )
+
+
+class KnowledgeSearchResponse(BaseModel):
+    embedder: str
+    min_score: float
+    results: list[SearchResult]
+
+
+class KnowledgeDocumentInfo(BaseModel):
+    doc_id: str
+    title: str
+    source: str
+    chunks: int
+
+
+class KnowledgeStatus(BaseModel):
+    embedder: str
+    min_score: float
+    top_k: int
+    chunks: int
+    documents: list[KnowledgeDocumentInfo]
+
+
 class AskRequest(BaseModel):
     text: Text
     language: Language = Field(default="fra", description="Langue de la question (langue pivot)")
@@ -76,6 +119,7 @@ class AskResponse(BaseModel):
     text: str
     language: Language
     engine: str
+    sources: list[SourceInfo] = Field(default_factory=list, description="Passages utilisés (RAG)")
 
 
 class SpeechRequest(BaseModel):
@@ -100,4 +144,5 @@ class PipelineResponse(BaseModel):
     answer_text: str = Field(description="Réponse traduite dans la langue détectée")
     answer_audio_base64: str
     audio_format: Literal["wav"] = "wav"
+    sources: list[SourceInfo] = Field(default_factory=list, description="Passages utilisés (RAG)")
     timings_ms: dict[str, float]

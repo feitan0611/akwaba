@@ -45,8 +45,9 @@ class MockResponder(Responder):
     name = "mock-llm"
     languages = frozenset(ALL_LANGUAGES)
 
-    def answer(self, question: str, language: str) -> str:
-        return f"[mock réponse en {language}] Vous avez demandé : {question}"
+    def answer(self, question: str, language: str, passages=()) -> str:
+        sources = f" (sources : {', '.join(p.title for p in passages)})" if passages else ""
+        return f"[mock réponse en {language}] Vous avez demandé : {question}{sources}"
 
 
 class MockSpeechSynthesizer(SpeechSynthesizer):

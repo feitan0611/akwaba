@@ -4,8 +4,12 @@ Prototype d'IA capable de **détecter**, **comprendre** et **répondre vocalemen
 orales en **Baoulé** et en **Dioula**, exposé via une **API REST** (FastAPI) et testable grâce à
 un **démonstrateur web**.
 
-> **État actuel : v0.1 — squelette.** L'API complète fonctionne avec un **moteur factice
-> (`mock`)** ; les vrais modèles seront intégrés après la collecte des données et le benchmark.
+> **État actuel : prototype.** Deux moteurs IA :
+> - **`mock`** (par défaut) : réponses factices, sans téléchargement — pour développer et tester ;
+> - **`local`** : vrais modèles open source, **Dioula de bout en bout** ; le Baoulé n'est
+>   couvert par aucun modèle public (voir [ADR 0003](docs/adr/0003-choix-des-modeles.md)).
+>
+> Les réponses s'appuient sur une **base de connaissances** (RAG, dossier [`knowledge/`](knowledge/README.md)).
 
 ## Démarrage rapide
 
@@ -25,7 +29,7 @@ pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 ```bash
-cd backend && uvicorn app.main:app --reload
+uvicorn app.main:app --reload --app-dir backend
 ```
 
 | URL | Contenu |
@@ -43,11 +47,31 @@ pytest
 ruff check . && ruff format --check .
 ```
 
+### Activer les vrais modèles (moteur `local`)
+
+Nécessite [Ollama](https://ollama.com) et ≈ 9 Go de téléchargements (licence non commerciale
+pour MMS et NLLB).
+
+```bash
+pip install -r backend/requirements-ml.txt
+```
+```bash
+ollama pull qwen2.5:3b
+```
+```bash
+ollama pull bge-m3
+```
+```bash
+cd backend && python -m app.download_models
+```
+
+Puis dans `.env` : `LANGCI_ENGINE=local`, et redémarrer le serveur.
+
 ## Flux principal
 
 ```
-Audio (bci/dyu) → détection + transcription → traduction → français → LLM
-               → traduction → langue détectée → synthèse vocale → Audio
+Audio (dyu) → transcription → traduction vers le français → recherche dans la base de
+connaissances (RAG) → LLM → traduction vers le dioula → synthèse vocale → Audio
 ```
 
 ## Documentation
