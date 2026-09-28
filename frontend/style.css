@@ -312,3 +312,132 @@ body.in-conversation .footer { display: none; }
   .composer-actions .label { display: none; }
   .setting { flex-wrap: wrap; }
 }
+
+/* ---------- Orbe : conversation vocale mains libres ---------- */
+/* --level (0 → 1) est mis à jour en continu par app.js selon le volume de la voix. */
+.orb-btn { padding: 0; background: var(--surface-2); }
+.mini-orb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.95), transparent 45%),
+    conic-gradient(from 0deg, #3aa9ff, #7b5cff, #ff7ad9, #3aa9ff);
+  box-shadow: 0 0 10px rgba(123, 92, 255, 0.7);
+  animation: orb-spin 6s linear infinite;
+}
+
+.voice-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 14px;
+  padding: 24px 16px;
+  overflow-y: auto;
+  text-align: center;
+  background: radial-gradient(ellipse at 50% 42%, rgba(38, 40, 70, 0.6), rgba(7, 8, 12, 0.97) 62%), rgba(7, 8, 12, 0.94);
+  backdrop-filter: blur(12px);
+  animation: appear 0.3s ease-out;
+}
+body.voice-open { overflow: hidden; }
+
+/* Taille limitée aussi par la hauteur : l'orbe tient sur les écrans bas (portable, paysage). */
+.orb-stage { position: relative; flex: none; width: min(260px, 62vw, 36vh); aspect-ratio: 1; margin: 12px 0 8px; }
+/* Halo et onde qui s'élargissent avec le volume */
+.orb-stage::before,
+.orb-stage::after {
+  content: "";
+  position: absolute;
+  inset: -14%;
+  border-radius: 50%;
+  border: 1px solid rgba(160, 170, 255, 0.18);
+  pointer-events: none;
+}
+.orb-stage::after { inset: -28%; border-color: rgba(160, 170, 255, 0.08); }
+.voice-mode[data-state="listening"] .orb-stage::before { animation: ripple 2.4s ease-out infinite; }
+.voice-mode[data-state="listening"] .orb-stage::after { animation: ripple 2.4s ease-out 1.2s infinite; }
+@keyframes ripple { from { transform: scale(0.8); opacity: 1; } to { transform: scale(1.25); opacity: 0; } }
+
+.orb {
+  --level: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  transform: scale(calc(0.9 + var(--level) * 0.25));
+  transition: transform 0.08s linear, filter 0.5s;
+  background:
+    radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0) 30%),
+    radial-gradient(circle at 72% 76%, #3b2cff 0%, transparent 55%),
+    radial-gradient(circle at 22% 80%, #00c2ff 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, #7b5cff 0%, #1a1446 72%);
+  box-shadow:
+    0 0 calc(50px + var(--level) * 90px) rgba(120, 120, 255, 0.45),
+    inset 0 0 40px rgba(255, 255, 255, 0.22);
+}
+.orb::before,
+.orb::after {
+  content: "";
+  position: absolute;
+  inset: -25%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  filter: blur(18px);
+  animation: orb-spin 9s linear infinite;
+  background: conic-gradient(from 0deg, transparent, rgba(0, 220, 255, 0.75), transparent 30%,
+    rgba(180, 90, 255, 0.75), transparent 60%, rgba(255, 255, 255, 0.55), transparent 85%);
+}
+.orb::after {
+  animation-duration: 14s;
+  animation-direction: reverse;
+  opacity: 0.75;
+  background: conic-gradient(from 90deg, transparent, rgba(255, 120, 220, 0.55), transparent 40%,
+    rgba(90, 120, 255, 0.85), transparent 75%);
+}
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+
+/* États */
+.voice-mode[data-state="listening"] .orb::before { animation-duration: 5s; }
+.voice-mode[data-state="thinking"] .orb {
+  filter: saturate(0.55) brightness(0.8);
+  animation: orb-breathe 1.8s ease-in-out infinite;
+}
+.voice-mode[data-state="thinking"] .orb::before { animation-duration: 2.2s; }
+.voice-mode[data-state="thinking"] .orb::after { animation-duration: 3s; }
+.voice-mode[data-state="speaking"] .orb { filter: saturate(1.35) brightness(1.1); }
+.voice-mode[data-state="error"] .orb { filter: hue-rotate(150deg) saturate(1.3); }
+@keyframes orb-breathe { 50% { transform: scale(0.84); } }
+.orb:focus-visible { outline: 2px solid var(--text); outline-offset: 8px; }
+
+.orb-status { margin: 0; font-size: 1.35rem; font-weight: 600; min-height: 1.6em; }
+.voice-mode[data-state="error"] .orb-status { color: #ffb3b3; font-size: 1.05rem; max-width: 520px; }
+.orb-caption {
+  margin: 0;
+  max-width: 560px;
+  min-height: 3.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.95rem;
+  color: var(--text-2);
+}
+.caption-you { color: var(--muted); font-size: 0.85rem; }
+.caption-bot { color: var(--text); }
+.voice-close { width: 48px; height: 48px; margin-top: 8px; }
+.voice-hint { margin: 0; color: var(--muted); font-size: 0.78rem; max-width: 420px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orb, .orb::before, .orb::after, .mini-orb, .orb-stage::before, .orb-stage::after { animation: none !important; }
+}
+@media (max-height: 560px) {
+  .voice-hint { display: none; }
+  .voice-mode { gap: 10px; }
+}

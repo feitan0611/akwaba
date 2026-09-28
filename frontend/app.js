@@ -243,8 +243,9 @@ function remember(role, text, lang) {
 }
 
 // ---------------------------------------------------------------- envoi vocal
-async function sendVoice(blob, filename = "question.wav") {
-  if (busy) return;
+// Retourne { ok, transcript, answer, audioBase64 } ou { ok: false, error } (utilisé par l'orbe).
+async function sendVoice(blob, filename = "question.wav", { autoplay = settings.autoplay } = {}) {
+  if (busy) return { ok: false, error: "Un message est déjà en cours de traitement." };
   setBusy(true);
   const userMsg = renderUserVoice(URL.createObjectURL(blob));
   const slot = addTyping();
@@ -267,14 +268,16 @@ async function sendVoice(blob, filename = "question.wav") {
         steps: { questionPivot: r.question_pivot, answerPivot: r.answer_pivot },
         timings: r.timings_ms,
       },
-      { autoplay: settings.autoplay },
+      { autoplay },
     );
     if (!conversation.title) conversation.title = "Message vocal";
     remember("user", `🎙️ ${d.text}`, d.language);
     remember("bot", r.answer_text, d.language);
+    return { ok: true, transcript: d.text, answer: r.answer_text, audioBase64: r.answer_audio_base64 };
   } catch (error) {
     userMsg.fail();
     renderError(slot, error.message);
+    return { ok: false, error: error.message };
   } finally {
     setBusy(false);
   }
@@ -323,6 +326,7 @@ async function sendText(text) {
 function setBusy(value) {
   busy = value;
   $("mic-btn").disabled = value;
+  $("orb-btn").disabled = value && !voice.active;
   updateSendButton();
 }
 
@@ -440,6 +444,217 @@ async function toWav(blob) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+// ---------------------------------------------------------------- conversation vocale (orbe)
+// Mode « mains libres » : l'orbe écoute, détecte la fin de la phrase (silence), envoie,
+// lit la réponse à voix haute puis se remet à écouter, sans toucher à aucun bouton.
+//
+// Détection de parole simple (VAD) par niveau sonore : on mesure le bruit ambiant pendant
+// les 400 premières ms, puis on considère qu'il y a parole au-dessus de 3× ce niveau.
+const VAD = {
+  calibrationMs: 400,
+  minThreshold: 0.015, // niveau RMS minimal considéré comme de la parole
+  noiseFactor: 3,
+  minSpeechMs: 300, // en dessous : bruit bref (toux, clic), ignoré
+  endSilenceMs: 1200, // silence qui marque la fin de la phrase
+  maxUtteranceMs: 30000,
+  idleRestartMs: 15000, // sans parole : on recommence un enregistrement neuf
+};
+const ORB_STATUS = {
+  listening: "Je vous écoute…",
+  thinking: "Je réfléchis…",
+  speaking: "Akwaba vous répond…",
+};
+
+const voice = {
+  active: false,
+  state: "idle",
+  stream: null,
+  ctx: null,
+  analyser: null,
+  outAnalyser: null,
+  recorder: null,
+  chunks: [],
+  discard: false,
+  raf: null,
+  listenStart: 0,
+  noiseSamples: [],
+  speechStart: 0,
+  lastVoice: 0,
+  level: 0,
+  audio: null,
+};
+
+function rms(analyser) {
+  const buffer = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(buffer);
+  let sum = 0;
+  for (const v of buffer) sum += v * v;
+  return Math.sqrt(sum / buffer.length);
+}
+
+function setOrb(state, text) {
+  voice.state = state;
+  $("voice-mode").dataset.state = state;
+  $("orb-status").textContent = text || ORB_STATUS[state] || "";
+}
+
+async function openVoiceMode() {
+  if (busy || voice.active) return;
+  stopRecording(true);
+  try {
+    voice.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  } catch {
+    renderError(addMessage("bot"), "accès au micro refusé ou indisponible.");
+    return;
+  }
+  voice.ctx = new AudioContext();
+  voice.analyser = voice.ctx.createAnalyser();
+  voice.analyser.fftSize = 1024;
+  voice.ctx.createMediaStreamSource(voice.stream).connect(voice.analyser);
+  voice.active = true;
+
+  const lang = $("lang").value;
+  $("voice-lang").textContent = lang ? LANG_NAMES[lang] : "Détection auto";
+  $("orb-caption").replaceChildren();
+  $("voice-mode").hidden = false;
+  document.body.classList.add("voice-open");
+  voiceLoop();
+  listen();
+}
+
+function closeVoiceMode() {
+  if (!voice.active) return;
+  voice.active = false;
+  cancelAnimationFrame(voice.raf);
+  if (voice.recorder?.state === "recording") {
+    voice.discard = true;
+    voice.recorder.stop();
+  }
+  voice.audio?.pause();
+  voice.stream?.getTracks().forEach((t) => t.stop());
+  voice.ctx?.close();
+  Object.assign(voice, { stream: null, ctx: null, analyser: null, outAnalyser: null, audio: null, state: "idle" });
+  $("voice-mode").hidden = true;
+  document.body.classList.remove("voice-open");
+  $("orb-btn").focus();
+}
+
+function listen() {
+  if (!voice.active) return;
+  setOrb("listening");
+  Object.assign(voice, { chunks: [], discard: false, speechStart: 0, lastVoice: 0, noiseSamples: [] });
+  voice.listenStart = performance.now();
+  voice.recorder = new MediaRecorder(voice.stream);
+  voice.recorder.ondataavailable = (e) => voice.chunks.push(e.data);
+  voice.recorder.onstop = onUtteranceEnd;
+  voice.recorder.start();
+}
+
+function endUtterance() {
+  setOrb("thinking"); // change d'état AVANT l'arrêt : la boucle cesse d'écouter
+  voice.recorder.stop();
+}
+
+function restartListening() {
+  voice.discard = true;
+  voice.recorder.stop(); // onUtteranceEnd relancera l'écoute
+}
+
+// Boucle d'animation : détection de parole pendant l'écoute, et taille de l'orbe
+// proportionnelle au volume (votre voix quand il écoute, la sienne quand il parle).
+function voiceLoop() {
+  if (!voice.active) return;
+  const now = performance.now();
+  let target = 0;
+
+  if (voice.state === "listening" && voice.analyser && voice.recorder?.state === "recording") {
+    const level = rms(voice.analyser);
+    target = Math.min(1, level * 10);
+    const elapsed = now - voice.listenStart;
+    if (elapsed < VAD.calibrationMs) {
+      voice.noiseSamples.push(level);
+    } else {
+      // Bruit de fond = moyenne de la moitié la plus calme des mesures de calibration.
+      const quiet = [...voice.noiseSamples].sort((a, b) => a - b).slice(0, Math.ceil(voice.noiseSamples.length / 2));
+      const noise = quiet.reduce((a, b) => a + b, 0) / (quiet.length || 1);
+      const threshold = Math.max(VAD.minThreshold, noise * VAD.noiseFactor);
+      if (level > threshold) {
+        if (!voice.speechStart) voice.speechStart = now;
+        voice.lastVoice = now;
+      }
+      if (voice.speechStart && now - voice.lastVoice > VAD.endSilenceMs) {
+        if (voice.lastVoice - voice.speechStart >= VAD.minSpeechMs) endUtterance();
+        else voice.speechStart = 0; // simple bruit : on continue d'écouter
+      } else if (voice.speechStart && now - voice.speechStart > VAD.maxUtteranceMs) {
+        endUtterance();
+      } else if (!voice.speechStart && elapsed > VAD.idleRestartMs) {
+        restartListening();
+      }
+    }
+  } else if (voice.state === "speaking" && voice.outAnalyser) {
+    target = Math.min(1, rms(voice.outAnalyser) * 5);
+  }
+
+  voice.level += (target - voice.level) * 0.25; // lissage
+  $("orb").style.setProperty("--level", voice.level.toFixed(3));
+  voice.raf = requestAnimationFrame(voiceLoop);
+}
+
+async function onUtteranceEnd() {
+  if (!voice.active) return;
+  if (voice.discard) return listen();
+
+  let wav;
+  try {
+    wav = await toWav(new Blob(voice.chunks, { type: voice.recorder.mimeType }));
+  } catch {
+    return retryAfter("Je n'ai pas pu lire l'enregistrement.");
+  }
+  const result = await sendVoice(wav, "question.wav", { autoplay: false });
+  if (!voice.active) return;
+  if (!result.ok) return retryAfter(result.error);
+
+  showCaption(result.transcript, result.answer);
+  await speak(result.audioBase64);
+  if (voice.active) setTimeout(listen, 300); // courte pause pour ne pas capter la fin de sa propre voix
+}
+
+function retryAfter(message) {
+  setOrb("error", message);
+  setTimeout(() => voice.active && listen(), 2500);
+}
+
+function showCaption(transcript, answer) {
+  $("orb-caption").replaceChildren(el("span", "caption-you", `Vous : ${transcript}`), el("span", "caption-bot", answer));
+}
+
+function speak(audioBase64) {
+  return new Promise((resolve) => {
+    const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
+    voice.audio = audio;
+    try {
+      // Analyseur branché sur la sortie : l'orbe pulse au rythme de la voix de l'assistant.
+      voice.outAnalyser = voice.ctx.createAnalyser();
+      voice.outAnalyser.fftSize = 1024;
+      voice.ctx.createMediaElementSource(audio).connect(voice.outAnalyser);
+      voice.outAnalyser.connect(voice.ctx.destination);
+    } catch {
+      voice.outAnalyser = null; // l'audio est joué quand même, sans animation synchronisée
+    }
+    const done = () => {
+      voice.outAnalyser = null;
+      resolve();
+    };
+    audio.addEventListener("ended", done);
+    audio.addEventListener("pause", done);
+    audio.addEventListener("error", done);
+    setOrb("speaking");
+    audio.play().catch(done);
+  });
+}
+
 // ---------------------------------------------------------------- cartes d'accueil
 function renderCards() {
   const cards = $("cards");
@@ -458,6 +673,7 @@ function renderCards() {
         ...(capabilities.language_detection
           ? [{ title: "Laisser l'assistant détecter la langue", meta: "Micro", icon: ICONS.mic, action: () => quickStart("") }]
           : []),
+        { title: "Conversation vocale mains libres", meta: "Orbe", icon: ICONS.mic, action: openVoiceMode },
         { title: "Écrire une question", meta: "Clavier", icon: ICONS.pen, action: () => $("text-input").focus() },
       ];
 
@@ -613,6 +829,12 @@ function init() {
     recording.recorder?.state === "recording" ? stopRecording() : startRecording(),
   );
   $("rec-cancel").addEventListener("click", () => stopRecording(true));
+  $("orb-btn").addEventListener("click", openVoiceMode);
+  $("voice-close").addEventListener("click", closeVoiceMode);
+  $("orb").addEventListener("click", closeVoiceMode);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && voice.active) closeVoiceMode();
+  });
   $("file-input").addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (file) sendVoice(file, file.name);
