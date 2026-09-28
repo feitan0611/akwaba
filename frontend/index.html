@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=0.11">
+  <link rel="stylesheet" href="style.css?v=0.15">
 </head>
 <body>
   <div class="beam" aria-hidden="true"></div>
@@ -58,14 +58,20 @@
               <span class="label">Joindre</span>
               <input id="file-input" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" hidden>
             </label>
-            <label class="chip" title="Langue de la conversation">
-              <svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
-              <select id="lang" aria-label="Langue">
+            <div class="lang-picker">
+              <!-- Liste native invisible : source de vérité de la langue choisie (lue par app.js). -->
+              <select id="lang" class="visually-hidden" tabindex="-1" aria-hidden="true">
                 <option value="">Détection auto</option>
                 <option value="bci">Baoulé</option>
                 <option value="dyu">Dioula</option>
               </select>
-            </label>
+              <button id="lang-btn" class="chip lang-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="lang-menu" title="Langue de la conversation">
+                <span id="lang-dot" class="lang-dot" aria-hidden="true"></span>
+                <span id="lang-label">Détection auto</span>
+                <svg viewBox="0 0 24 24" class="icon chevron" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+              </button>
+              <ul id="lang-menu" class="lang-menu" role="listbox" aria-label="Langue de la conversation" tabindex="-1" hidden></ul>
+            </div>
             <span class="spacer"></span>
             <button id="orb-btn" class="round orb-btn" type="button" aria-label="Conversation vocale mains libres" title="Conversation vocale mains libres">
               <span class="mini-orb" aria-hidden="true"></span>
@@ -145,6 +151,6 @@
     <a href="/docs" target="_blank" rel="noopener">Documentation de l'API</a>
   </footer>
 
-  <script src="app.js?v=0.11"></script>
+  <script src="app.js?v=0.15"></script>
 </body>
 </html>

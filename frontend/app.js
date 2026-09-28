@@ -663,6 +663,125 @@ function speak(audioBase64) {
   });
 }
 
+
+// ---------------------------------------------------------------- sélecteur de langue
+// Menu personnalisé (thème sombre, état de chaque langue) posé sur la liste native #lang,
+// qui reste la source de vérité lue par le reste de l'application.
+function langInfo(option) {
+  if (option.value === "") {
+    return { kind: "auto", badge: "Auto", desc: "L'assistant reconnaît la langue parlée" };
+  }
+  if (option.disabled) {
+    return { kind: "soon", badge: "Bientôt", desc: "En préparation : aucun modèle public pour cette langue" };
+  }
+  return {
+    kind: "available",
+    badge: "Disponible",
+    desc: isMock ? "Mode test : réponses factices" : "Écoute, traduction et réponse vocale",
+  };
+}
+
+function setLanguage(code) {
+  const select = $("lang");
+  const option = [...select.options].find((o) => o.value === code && !o.disabled);
+  if (!option) return;
+  select.value = code;
+  syncLangButton();
+  renderLangMenu();
+}
+
+function syncLangButton() {
+  const option = $("lang").selectedOptions[0];
+  if (!option) return;
+  const info = langInfo(option);
+  $("lang-label").textContent = option.value ? LANG_NAMES[option.value] : "Détection auto";
+  $("lang-dot").className = `lang-dot ${info.kind}`;
+}
+
+function renderLangMenu() {
+  const menu = $("lang-menu");
+  const select = $("lang");
+  const check =
+    '<svg viewBox="0 0 24 24" class="icon lang-check" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+  menu.replaceChildren(el("li", "lang-menu-title", "Langue de la conversation"));
+  menu.firstChild.setAttribute("role", "presentation");
+  [...select.options].forEach((option) => {
+    const info = langInfo(option);
+    const item = el("li", "lang-option");
+    item.id = `lang-opt-${option.value || "auto"}`;
+    item.dataset.value = option.value;
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(option.selected));
+    if (option.disabled) item.setAttribute("aria-disabled", "true");
+
+    const dot = el("span", `lang-dot ${info.kind}`);
+    const text = el("span");
+    text.append(el("span", "name", option.value ? LANG_NAMES[option.value] : "Détection auto"), el("span", "desc", info.desc));
+    const right = el("span", "right");
+    right.append(el("span", `lang-badge ${info.kind}`, info.badge));
+    right.insertAdjacentHTML("beforeend", check);
+    item.append(dot, text, right);
+
+    item.addEventListener("click", () => {
+      if (option.disabled) return;
+      setLanguage(option.value);
+      closeLangMenu(true);
+    });
+    item.addEventListener("mousemove", () => highlightLang(item));
+    menu.append(item);
+  });
+  syncLangButton();
+}
+
+const langOptions = () => [...$("lang-menu").querySelectorAll(".lang-option")];
+
+function highlightLang(item) {
+  langOptions().forEach((o) => o.classList.toggle("active", o === item));
+  if (item) $("lang-menu").setAttribute("aria-activedescendant", item.id);
+}
+
+function openLangMenu() {
+  renderLangMenu();
+  const menu = $("lang-menu");
+  menu.hidden = false;
+  // S'ouvre vers le haut (la zone de saisie est en bas), sauf si la place manque sous la barre du haut.
+  const spaceAbove = $("lang-btn").getBoundingClientRect().top - document.querySelector(".topbar").offsetHeight;
+  menu.classList.toggle("below", spaceAbove < menu.offsetHeight + 16);
+  $("lang-btn").setAttribute("aria-expanded", "true");
+  highlightLang(langOptions().find((o) => o.getAttribute("aria-selected") === "true") || langOptions()[0]);
+  menu.focus({ preventScroll: true }); // sans faire défiler la page
+}
+
+function closeLangMenu(returnFocus = false) {
+  if ($("lang-menu").hidden) return;
+  $("lang-menu").hidden = true;
+  $("lang-btn").setAttribute("aria-expanded", "false");
+  if (returnFocus) $("lang-btn").focus();
+}
+
+function onLangMenuKey(e) {
+  const enabled = langOptions().filter((o) => o.getAttribute("aria-disabled") !== "true");
+  const current = enabled.indexOf($("lang-menu").querySelector(".lang-option.active"));
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    highlightLang(enabled[(current + step + enabled.length) % enabled.length]);
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    const active = $("lang-menu").querySelector(".lang-option.active");
+    if (active && active.getAttribute("aria-disabled") !== "true") {
+      setLanguage(active.dataset.value);
+      closeLangMenu(true);
+    }
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    e.stopPropagation();
+    closeLangMenu(true);
+  } else if (e.key === "Tab") {
+    closeLangMenu();
+  }
+}
+
 // ---------------------------------------------------------------- cartes d'accueil
 function renderCards() {
   const cards = $("cards");
@@ -698,7 +817,7 @@ function renderCards() {
 }
 
 function quickStart(lang) {
-  $("lang").value = lang;
+  setLanguage(lang);
   startRecording();
 }
 
@@ -797,6 +916,7 @@ function applyCapabilities() {
   };
   fill($("lang"), true);
   fill($("set-textlang"), false);
+  renderLangMenu();
   $("set-textlang").value = defaultLanguage();
 
   const available = supportedLanguages().map((c) => LANG_NAMES[c]);
@@ -838,6 +958,11 @@ function init() {
   );
   $("rec-cancel").addEventListener("click", () => stopRecording(true));
   $("orb-btn").addEventListener("click", openVoiceMode);
+  $("lang-btn").addEventListener("click", () => ($("lang-menu").hidden ? openLangMenu() : closeLangMenu(true)));
+  $("lang-menu").addEventListener("keydown", onLangMenuKey);
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".lang-picker")) closeLangMenu();
+  });
   $("voice-close").addEventListener("click", closeVoiceMode);
   $("orb").addEventListener("click", closeVoiceMode);
   document.addEventListener("keydown", (e) => {
@@ -870,6 +995,7 @@ function init() {
   });
 
   renderCards();
+  renderLangMenu();
   loadHealth();
 }
 
