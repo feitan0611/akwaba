@@ -11,7 +11,9 @@ router = APIRouter(tags=["Système"])
 
 @router.get("/health", response_model=HealthResponse, summary="État du service")
 def health(settings: Settings = Depends(get_app_settings)) -> HealthResponse:
-    return HealthResponse(status="ok", version=__version__, engine=settings.engine)
+    return HealthResponse(
+        status="ok", version=__version__, engine=settings.engine, pivot_language=settings.pivot_language
+    )
 
 
 @router.get("/languages", response_model=list[LanguageInfo], summary="Langues prises en charge")

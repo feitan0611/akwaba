@@ -3,53 +3,131 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Démo Baoulé / Dioula</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Akwaba — Assistant vocal Baoulé / Dioula</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=0.6">
 </head>
 <body>
-  <main>
-    <header>
-      <h1>Démonstrateur Baoulé / Dioula</h1>
-      <p class="muted">Parlez en Baoulé ou en Dioula : le système détecte la langue et répond vocalement dans la même langue.</p>
-      <p id="engine-banner" class="banner" hidden></p>
-    </header>
+  <div class="beam" aria-hidden="true"></div>
 
-    <section class="card">
-      <h2>1. Votre question</h2>
-      <div class="row">
-        <button id="record-btn" type="button">🎙️ Enregistrer</button>
-        <span class="or">ou</span>
-        <label class="file">
-          <input id="file-input" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg">
-          Choisir un fichier .wav / .mp3
-        </label>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Accueil">Akwaba</a>
+    <nav class="tabs" aria-label="Navigation">
+      <button class="tab active" data-view="chat" type="button">Chat</button>
+      <button class="tab" data-view="history" type="button">Historique</button>
+      <button class="tab" data-view="settings" type="button">Paramètres</button>
+    </nav>
+    <div class="topbar-right">
+      <button id="new-chat" class="pill" type="button">
+        <svg viewBox="0 0 24 24" class="icon"><path d="M12 5v14M5 12h14"/></svg>
+        Nouvelle
+      </button>
+      <span id="engine-pill" class="pill status" title="État du moteur IA">…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===== Chat ===== -->
+    <section id="view-chat" class="view">
+      <div id="hero" class="hero">
+        <p id="eyebrow" class="eyebrow">Baoulé · Dioula</p>
+        <h1>
+          <span id="greeting" class="greeting">Bonjour !</span>
+          <span class="tagline">Je suis <strong>prêt à vous écouter</strong></span>
+        </h1>
       </div>
-      <audio id="input-audio" controls hidden></audio>
-      <div class="row">
-        <label for="hint">Indice de langue (moteur de test uniquement)</label>
-        <select id="hint">
-          <option value="">Automatique</option>
+
+      <div id="messages" class="messages" aria-live="polite"></div>
+
+      <div class="composer-wrap">
+        <form id="composer" class="composer" autocomplete="off">
+          <div id="rec-bar" class="rec-bar" hidden>
+            <span class="rec-dot" aria-hidden="true"></span>
+            <span id="rec-time" class="rec-time">0:00</span>
+            <div id="rec-levels" class="rec-levels" aria-hidden="true"></div>
+            <button id="rec-cancel" class="chip" type="button">Annuler</button>
+          </div>
+
+          <textarea id="text-input" rows="1" placeholder="Posez votre question, ou appuyez sur le micro pour parler…" aria-label="Votre message"></textarea>
+
+          <div class="composer-actions">
+            <label class="chip" title="Envoyer un fichier .wav ou .mp3">
+              <svg viewBox="0 0 24 24" class="icon"><path d="m21.4 11.1-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>
+              <span class="label">Joindre</span>
+              <input id="file-input" type="file" accept=".wav,.mp3,audio/wav,audio/mpeg" hidden>
+            </label>
+            <label class="chip" title="Langue de la conversation">
+              <svg viewBox="0 0 24 24" class="icon"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>
+              <select id="lang" aria-label="Langue">
+                <option value="">Détection auto</option>
+                <option value="bci">Baoulé</option>
+                <option value="dyu">Dioula</option>
+              </select>
+            </label>
+            <span class="spacer"></span>
+            <button id="mic-btn" class="round mic" type="button" aria-label="Parler">
+              <svg viewBox="0 0 24 24" class="icon icon-mic"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>
+              <svg viewBox="0 0 24 24" class="icon icon-stop"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+            </button>
+            <button id="send-btn" class="round send" type="submit" aria-label="Envoyer" disabled>
+              <svg viewBox="0 0 24 24" class="icon"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+        </form>
+        <div id="cards" class="cards"></div>
+      </div>
+    </section>
+
+    <!-- ===== Historique ===== -->
+    <section id="view-history" class="view page" hidden>
+      <h2>Historique</h2>
+      <p class="muted">Conversations enregistrées sur cet appareil (texte uniquement, l'audio n'est pas conservé).</p>
+      <div id="history-list" class="history-list"></div>
+    </section>
+
+    <!-- ===== Paramètres ===== -->
+    <section id="view-settings" class="view page" hidden>
+      <h2>Paramètres</h2>
+      <div class="setting">
+        <div>
+          <strong>Lecture automatique des réponses</strong>
+          <p class="muted">Joue la réponse vocale dès qu'elle arrive.</p>
+        </div>
+        <input id="set-autoplay" type="checkbox" class="switch">
+      </div>
+      <div class="setting">
+        <div>
+          <strong>Langue par défaut à l'écrit</strong>
+          <p class="muted">Utilisée pour les messages écrits quand la détection est automatique.</p>
+        </div>
+        <select id="set-textlang" class="chip">
           <option value="bci">Baoulé</option>
           <option value="dyu">Dioula</option>
         </select>
       </div>
-      <button id="send-btn" type="button" class="primary" disabled>Envoyer</button>
-      <p id="status" class="muted" role="status"></p>
-    </section>
-
-    <section id="result" class="card" hidden>
-      <h2>2. Résultat</h2>
-      <dl>
-        <dt>Langue détectée</dt><dd id="r-lang"></dd>
-        <dt>Transcription</dt><dd id="r-text"></dd>
-        <dt>Question (langue pivot)</dt><dd id="r-qpivot"></dd>
-        <dt>Réponse (langue pivot)</dt><dd id="r-apivot"></dd>
-        <dt>Réponse (langue détectée)</dt><dd id="r-answer"></dd>
-      </dl>
-      <audio id="output-audio" controls></audio>
-      <p id="r-timings" class="muted small"></p>
+      <div class="setting">
+        <div>
+          <strong>Effacer l'historique</strong>
+          <p class="muted">Supprime les conversations enregistrées sur cet appareil.</p>
+        </div>
+        <button id="clear-history" class="chip danger" type="button">Effacer</button>
+      </div>
+      <div class="setting">
+        <div>
+          <strong>Moteur IA</strong>
+          <p id="engine-info" class="muted">…</p>
+        </div>
+      </div>
     </section>
   </main>
-  <script src="app.js"></script>
+
+  <footer class="footer">
+    <span>Prototype — IA vocale Baoulé / Dioula</span>
+    <a href="/docs" target="_blank" rel="noopener">Documentation de l'API</a>
+  </footer>
+
+  <script src="app.js?v=0.6"></script>
 </body>
 </html>

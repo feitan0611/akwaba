@@ -22,6 +22,17 @@ from app.services.registry import build_engines
 API_PREFIX = "/api/v1"
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
+
+class NoCacheStaticFiles(StaticFiles):
+    """Fichiers du démonstrateur : le navigateur revalide à chaque chargement, pour ne jamais
+    afficher une ancienne version du frontend après une mise à jour."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 DESCRIPTION = """
 Prototype d'API de traitement vocal du **Baoulé** (`bci`) et du **Dioula** (`dyu`).
 
@@ -52,7 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(module.router, prefix=API_PREFIX)
 
     if settings.serve_demo and FRONTEND_DIR.is_dir():
-        app.mount("/demo", StaticFiles(directory=FRONTEND_DIR, html=True), name="demo")
+        app.mount("/demo", NoCacheStaticFiles(directory=FRONTEND_DIR, html=True), name="demo")
 
     @app.get("/", include_in_schema=False)
     def root() -> RedirectResponse:

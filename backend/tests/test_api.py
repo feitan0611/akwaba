@@ -16,6 +16,7 @@ def test_health(client):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.json()["engine"] == "mock"
+    assert response.json()["pivot_language"] == "fra"
 
 
 def test_languages(client):
@@ -165,3 +166,15 @@ def test_openapi_documents_both_audio_content_types(client):
     spec = client.get("/openapi.json").json()
     content = spec["paths"][f"{API}/detect"]["post"]["requestBody"]["content"]
     assert {"multipart/form-data", "application/json"} <= set(content)
+
+
+def test_demo_is_served_without_stale_cache():
+    from fastapi.testclient import TestClient
+
+    from app.config import Settings
+    from app.main import create_app
+
+    demo_client = TestClient(create_app(Settings(_env_file=None, serve_demo=True)))
+    response = demo_client.get("/demo/")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"

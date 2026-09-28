@@ -1,28 +1,394 @@
-// Démonstrateur : enregistre ou charge un audio, l'envoie à /api/v1/pipeline et affiche la réponse.
-// Servi par l'API sur /demo/ : l'API est donc sur la même origine.
-const API_BASE = window.API_BASE || "/api/v1";
-const LANG_NAMES = { bci: "Baoulé", dyu: "Dioula" };
+// Akwaba — interface conversationnelle du prototype Baoulé / Dioula.
+// Servie par l'API sur /demo/ : l'API est donc sur la même origine.
+//
+// Deux façons de parler à l'assistant :
+//  - à la voix : micro → WAV 16 kHz → POST /pipeline (détection + réponse vocale)
+//  - à l'écrit : /translate (langue locale → pivot) → /ask → /translate (retour) → /speech
+
+const API = window.API_BASE || "/api/v1";
+const LANG_NAMES = { bci: "Baoulé", dyu: "Dioula", fra: "Français", eng: "Anglais" };
 const TARGET_SAMPLE_RATE = 16000;
+const STORE_CONVERSATIONS = "akwaba.conversations";
+const STORE_SETTINGS = "akwaba.settings";
+const MAX_SAVED_CONVERSATIONS = 30;
 
 const $ = (id) => document.getElementById(id);
-let audioBlob = null;
-let recorder = null;
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" class="icon"><path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" class="icon"><path d="M7 4h4v16H7zM13 4h4v16h-4z" fill="currentColor" stroke="none"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" class="icon"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" class="icon"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" class="icon"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+};
 
-function setStatus(message) {
-  $("status").textContent = message;
+// ---------------------------------------------------------------- stockage local
+// Tout accès à localStorage peut échouer (navigation privée, blocage) : on ne plante jamais.
+const store = {
+  get(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+      /* stockage indisponible : l'historique ne sera simplement pas conservé */
+    }
+  },
+};
+
+const settings = { autoplay: true, textLang: "bci", ...store.get(STORE_SETTINGS, {}) };
+let pivotLanguage = "fra";
+let lastLanguage = null; // dernière langue détectée : réutilisée pour les messages écrits
+let conversation = newConversation();
+let busy = false;
+
+function newConversation() {
+  return { id: Date.now().toString(36), date: Date.now(), title: "", messages: [] };
 }
 
-function setInput(blob) {
-  audioBlob = blob;
-  $("input-audio").src = URL.createObjectURL(blob);
-  $("input-audio").hidden = false;
-  $("send-btn").disabled = false;
+function saveConversation() {
+  if (!conversation.messages.length) return;
+  const all = store.get(STORE_CONVERSATIONS, []).filter((c) => c.id !== conversation.id);
+  all.unshift({ ...conversation, date: Date.now() });
+  store.set(STORE_CONVERSATIONS, all.slice(0, MAX_SAVED_CONVERSATIONS));
+}
+
+// ---------------------------------------------------------------- utilitaires
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function relativeDate(timestamp) {
+  const minutes = (Date.now() - timestamp) / 60000;
+  if (minutes < 1) return "À l'instant";
+  if (minutes < 60) return `Il y a ${Math.floor(minutes)} min`;
+  if (minutes < 24 * 60) return `Il y a ${Math.floor(minutes / 60)} h`;
+  return new Date(timestamp).toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+}
+
+function formatTime(seconds) {
+  if (!Number.isFinite(seconds)) return "0:00";
+  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(`${API}${path}`, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || `Erreur ${response.status}`);
+  return body;
+}
+
+const postJson = (path, data) =>
+  api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+
+async function timed(timings, step, fn) {
+  const start = performance.now();
+  const result = await fn();
+  timings[step] = performance.now() - start;
+  return result;
+}
+
+// ---------------------------------------------------------------- lecteur vocal
+let currentAudio = null;
+
+function voicePlayer(src, { autoplay = false } = {}) {
+  const wrap = el("div", "voice");
+  const button = el("button", "voice-play");
+  button.type = "button";
+  button.setAttribute("aria-label", "Écouter");
+  button.innerHTML = ICONS.play;
+  const bars = el("div", "voice-bars");
+  const heights = Array.from({ length: 28 }, (_, i) => 25 + Math.abs(Math.sin(i * 1.7) * 60) + (i % 3) * 5);
+  heights.forEach((h) => {
+    const bar = el("span");
+    bar.style.height = `${Math.min(100, h)}%`;
+    bars.append(bar);
+  });
+  const time = el("span", "voice-time", "0:00");
+  wrap.append(button, bars, time);
+
+  const audio = new Audio(src);
+  audio.addEventListener("loadedmetadata", () => (time.textContent = formatTime(audio.duration)));
+  audio.addEventListener("timeupdate", () => {
+    const progress = audio.currentTime / (audio.duration || 1);
+    [...bars.children].forEach((bar, i) => bar.classList.toggle("played", i / bars.children.length < progress));
+    time.textContent = formatTime(audio.currentTime || audio.duration);
+  });
+  audio.addEventListener("play", () => (button.innerHTML = ICONS.pause));
+  const reset = () => (button.innerHTML = ICONS.play);
+  audio.addEventListener("pause", reset);
+  audio.addEventListener("ended", () => {
+    reset();
+    [...bars.children].forEach((bar) => bar.classList.remove("played"));
+    time.textContent = formatTime(audio.duration);
+  });
+
+  const play = () => {
+    if (currentAudio && currentAudio !== audio) currentAudio.pause();
+    currentAudio = audio;
+    audio.play().catch(() => {}); // lecture auto parfois bloquée par le navigateur : pas grave
+  };
+  button.addEventListener("click", () => (audio.paused ? play() : audio.pause()));
+  if (autoplay) play();
+  return wrap;
+}
+
+// ---------------------------------------------------------------- messages
+function startConversationView() {
+  document.body.classList.add("in-conversation");
+}
+
+function addMessage(role) {
+  startConversationView();
+  const msg = el("div", `msg ${role}`);
+  if (role !== "user") msg.append(el("div", "avatar", "A"));
+  const bubble = el("div", "bubble");
+  msg.append(bubble);
+  $("messages").append(msg);
+  msg.scrollIntoView({ behavior: "smooth", block: "end" });
+  return { msg, bubble };
+}
+
+function addTyping() {
+  const { msg, bubble } = addMessage("bot");
+  const dots = el("div", "typing");
+  dots.append(el("span"), el("span"), el("span"));
+  bubble.append(dots);
+  return { msg, bubble };
+}
+
+function langTag(code, suffix = "") {
+  return el("span", "lang-tag", `${LANG_NAMES[code] || code}${suffix}`);
+}
+
+function renderUserText(text, lang) {
+  const { bubble } = addMessage("user");
+  bubble.append(el("p", "", text), langTag(lang));
+}
+
+function renderUserVoice(audioUrl) {
+  const { bubble } = addMessage("user");
+  bubble.append(voicePlayer(audioUrl));
+  const sub = el("p", "sub", "Transcription en cours…");
+  bubble.append(sub);
+  return {
+    update(text, lang, confidence) {
+      sub.textContent = text;
+      bubble.append(langTag(lang, ` · détecté (${Math.round(confidence * 100)} %)`));
+    },
+  };
+}
+
+function renderBotAnswer(slot, answer, { autoplay }) {
+  const { bubble } = slot;
+  bubble.replaceChildren();
+  bubble.append(el("p", "", answer.text));
+  if (answer.audioBase64) {
+    bubble.append(voicePlayer(`data:audio/wav;base64,${answer.audioBase64}`, { autoplay }));
+  }
+  bubble.append(langTag(answer.lang));
+  if (answer.steps) {
+    const details = el("details", "steps");
+    details.append(el("summary", "", "Étapes du traitement"));
+    const dl = el("dl");
+    const total = Object.values(answer.timings || {}).reduce((a, b) => a + b, 0);
+    [
+      [`Question (${LANG_NAMES[pivotLanguage]})`, answer.steps.questionPivot],
+      [`Réponse (${LANG_NAMES[pivotLanguage]})`, answer.steps.answerPivot],
+      ["Temps total", `${Math.round(total)} ms`],
+    ].forEach(([k, v]) => dl.append(el("dt", "", k), el("dd", "", v)));
+    details.append(dl);
+    bubble.append(details);
+  }
+  slot.msg.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function renderError(slot, message) {
+  slot.msg.classList.add("error");
+  slot.bubble.replaceChildren(el("p", "", `Désolé, une erreur est survenue : ${message}`));
+}
+
+function remember(role, text, lang) {
+  conversation.messages.push({ role, text, lang });
+  if (!conversation.title && role === "user") conversation.title = text;
+  saveConversation();
+}
+
+// ---------------------------------------------------------------- envoi vocal
+async function sendVoice(blob, filename = "question.wav") {
+  if (busy) return;
+  setBusy(true);
+  const userMsg = renderUserVoice(URL.createObjectURL(blob));
+  const slot = addTyping();
+
+  const form = new FormData();
+  form.append("audio", blob, filename);
+  if ($("lang").value) form.append("language_hint", $("lang").value);
+
+  try {
+    const r = await api("/pipeline", { method: "POST", body: form });
+    const d = r.detection;
+    lastLanguage = d.language;
+    userMsg.update(d.text, d.language, d.confidence);
+    renderBotAnswer(
+      slot,
+      {
+        text: r.answer_text,
+        lang: d.language,
+        audioBase64: r.answer_audio_base64,
+        steps: { questionPivot: r.question_pivot, answerPivot: r.answer_pivot },
+        timings: r.timings_ms,
+      },
+      { autoplay: settings.autoplay },
+    );
+    if (!conversation.title) conversation.title = "Message vocal";
+    remember("user", `🎙️ ${d.text}`, d.language);
+    remember("bot", r.answer_text, d.language);
+  } catch (error) {
+    userMsg.update("Transcription indisponible", $("lang").value || "bci", 0);
+    renderError(slot, error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ---------------------------------------------------------------- envoi écrit
+async function sendText(text) {
+  if (busy || !text.trim()) return;
+  setBusy(true);
+  const lang = $("lang").value || lastLanguage || settings.textLang;
+  renderUserText(text, lang);
+  const slot = addTyping();
+  const timings = {};
+
+  try {
+    const question = await timed(timings, "translate_in", () =>
+      postJson("/translate", { text, source: lang, target: pivotLanguage }),
+    );
+    const answer = await timed(timings, "ask", () =>
+      postJson("/ask", { text: question.text, language: pivotLanguage }),
+    );
+    const back = await timed(timings, "translate_out", () =>
+      postJson("/translate", { text: answer.text, source: pivotLanguage, target: lang }),
+    );
+    const speech = await timed(timings, "speech", () => postJson("/speech", { text: back.text, language: lang }));
+    renderBotAnswer(
+      slot,
+      {
+        text: back.text,
+        lang,
+        audioBase64: speech.audio_base64,
+        steps: { questionPivot: question.text, answerPivot: answer.text },
+        timings,
+      },
+      { autoplay: settings.autoplay },
+    );
+    remember("user", text, lang);
+    remember("bot", back.text, lang);
+  } catch (error) {
+    renderError(slot, error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function setBusy(value) {
+  busy = value;
+  $("mic-btn").disabled = value;
+  updateSendButton();
+}
+
+function updateSendButton() {
+  $("send-btn").disabled = busy || !$("text-input").value.trim();
+}
+
+// ---------------------------------------------------------------- micro
+const recording = { recorder: null, stream: null, chunks: [], cancelled: false, timer: null, raf: null, ctx: null };
+
+async function startRecording() {
+  if (busy) return;
+  try {
+    recording.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    const slot = addMessage("bot");
+    renderError(slot, "accès au micro refusé ou indisponible. Vous pouvez joindre un fichier audio.");
+    return;
+  }
+  recording.chunks = [];
+  recording.cancelled = false;
+  recording.recorder = new MediaRecorder(recording.stream);
+  recording.recorder.ondataavailable = (e) => recording.chunks.push(e.data);
+  recording.recorder.onstop = onRecordingStop;
+  recording.recorder.start();
+
+  $("composer").classList.add("recording");
+  $("rec-bar").hidden = false;
+  $("mic-btn").setAttribute("aria-label", "Arrêter et envoyer");
+  const started = Date.now();
+  $("rec-time").textContent = "0:00";
+  recording.timer = setInterval(() => ($("rec-time").textContent = formatTime((Date.now() - started) / 1000)), 250);
+  showLevels(recording.stream);
+}
+
+function stopRecording(cancel = false) {
+  if (!recording.recorder || recording.recorder.state !== "recording") return;
+  recording.cancelled = cancel;
+  recording.recorder.stop();
+}
+
+// Barres de niveau sonore en direct pendant l'enregistrement.
+function showLevels(stream) {
+  const container = $("rec-levels");
+  container.replaceChildren(...Array.from({ length: 48 }, () => el("span")));
+  recording.ctx = new AudioContext();
+  const analyser = recording.ctx.createAnalyser();
+  analyser.fftSize = 256;
+  recording.ctx.createMediaStreamSource(stream).connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const bars = [...container.children];
+  const draw = () => {
+    analyser.getByteFrequencyData(data);
+    bars.forEach((bar, i) => {
+      const value = data[Math.floor((i / bars.length) * data.length * 0.6)] / 255;
+      bar.style.height = `${Math.max(3, value * 28)}px`;
+    });
+    recording.raf = requestAnimationFrame(draw);
+  };
+  draw();
+}
+
+async function onRecordingStop() {
+  clearInterval(recording.timer);
+  cancelAnimationFrame(recording.raf);
+  recording.ctx?.close();
+  recording.stream.getTracks().forEach((t) => t.stop());
+  $("composer").classList.remove("recording");
+  $("rec-bar").hidden = true;
+  $("mic-btn").setAttribute("aria-label", "Parler");
+  if (recording.cancelled || !recording.chunks.length) return;
+
+  try {
+    const wav = await toWav(new Blob(recording.chunks, { type: recording.recorder.mimeType }));
+    await sendVoice(wav);
+  } catch {
+    renderError(addMessage("bot"), "impossible de lire l'enregistrement.");
+  }
 }
 
 // Les navigateurs enregistrent en WebM/Ogg ; l'API n'accepte que WAV/MP3.
-// On décode donc l'enregistrement puis on le ré-encode en WAV PCM 16 bits mono 16 kHz.
+// On décode l'enregistrement puis on le ré-encode en WAV PCM 16 bits mono 16 kHz.
 async function toWav(blob) {
-  const decoded = await new AudioContext().decodeAudioData(await blob.arrayBuffer());
+  const decodeCtx = new AudioContext();
+  const decoded = await decodeCtx.decodeAudioData(await blob.arrayBuffer());
+  decodeCtx.close();
   const length = Math.ceil(decoded.duration * TARGET_SAMPLE_RATE);
   const offline = new OfflineAudioContext(1, length, TARGET_SAMPLE_RATE);
   const source = offline.createBufferSource();
@@ -38,13 +404,13 @@ async function toWav(blob) {
   view.setUint32(4, 36 + samples.length * 2, true);
   writeString(8, "WAVE");
   writeString(12, "fmt ");
-  view.setUint32(16, 16, true);                      // taille du bloc fmt
-  view.setUint16(20, 1, true);                       // PCM
-  view.setUint16(22, 1, true);                       // mono
+  view.setUint32(16, 16, true); // taille du bloc fmt
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
   view.setUint32(24, TARGET_SAMPLE_RATE, true);
-  view.setUint32(28, TARGET_SAMPLE_RATE * 2, true);  // octets par seconde
-  view.setUint16(32, 2, true);                       // octets par échantillon
-  view.setUint16(34, 16, true);                      // bits par échantillon
+  view.setUint32(28, TARGET_SAMPLE_RATE * 2, true); // octets par seconde
+  view.setUint16(32, 2, true); // octets par échantillon
+  view.setUint16(34, 16, true); // bits par échantillon
   writeString(36, "data");
   view.setUint32(40, samples.length * 2, true);
   samples.forEach((s, i) => {
@@ -54,94 +420,165 @@ async function toWav(blob) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-async function toggleRecording() {
-  const button = $("record-btn");
-  if (recorder && recorder.state === "recording") {
-    recorder.stop();
+// ---------------------------------------------------------------- cartes d'accueil
+function renderCards() {
+  const cards = $("cards");
+  cards.replaceChildren();
+  const recent = store.get(STORE_CONVERSATIONS, []).slice(0, 5);
+
+  const items = recent.length
+    ? recent.map((c) => ({ title: c.title, meta: relativeDate(c.date), icon: ICONS.chat, action: () => openConversation(c) }))
+    : [
+        { title: "Parler en Baoulé", meta: "Micro", icon: ICONS.mic, action: () => quickStart("bci") },
+        { title: "Parler en Dioula", meta: "Micro", icon: ICONS.mic, action: () => quickStart("dyu") },
+        { title: "Laisser l'assistant détecter la langue", meta: "Micro", icon: ICONS.mic, action: () => quickStart("") },
+        { title: "Écrire une question", meta: "Clavier", icon: ICONS.pen, action: () => $("text-input").focus() },
+      ];
+
+  items.forEach((item) => {
+    const card = el("button", "card");
+    card.type = "button";
+    const meta = el("span", "card-meta");
+    meta.innerHTML = item.icon;
+    meta.append(item.meta);
+    card.append(el("span", "", item.title), meta);
+    card.addEventListener("click", item.action);
+    cards.append(card);
+  });
+}
+
+function quickStart(lang) {
+  $("lang").value = lang;
+  startRecording();
+}
+
+// ---------------------------------------------------------------- conversations
+function resetChat() {
+  stopRecording(true);
+  conversation = newConversation();
+  lastLanguage = null;
+  $("messages").replaceChildren();
+  document.body.classList.remove("in-conversation");
+  renderCards();
+  showView("chat");
+}
+
+function openConversation(saved) {
+  resetChat();
+  conversation = saved;
+  startConversationView();
+  saved.messages.forEach((m) => {
+    const { bubble } = addMessage(m.role);
+    bubble.append(el("p", "", m.text), langTag(m.lang));
+    lastLanguage = m.lang;
+  });
+}
+
+function renderHistory() {
+  const list = $("history-list");
+  list.replaceChildren();
+  const all = store.get(STORE_CONVERSATIONS, []);
+  if (!all.length) {
+    list.append(el("p", "muted", "Aucune conversation pour l'instant."));
     return;
   }
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch {
-    setStatus("Accès au micro refusé ou indisponible.");
-    return;
-  }
-  const chunks = [];
-  recorder = new MediaRecorder(stream);
-  recorder.ondataavailable = (e) => chunks.push(e.data);
-  recorder.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
-    button.textContent = "🎙️ Enregistrer";
-    button.classList.remove("recording");
-    setStatus("Conversion en WAV…");
-    try {
-      setInput(await toWav(new Blob(chunks, { type: recorder.mimeType })));
-      setStatus("Enregistrement prêt.");
-    } catch {
-      setStatus("Impossible de convertir l'enregistrement.");
-    }
-  };
-  recorder.start();
-  button.textContent = "⏹️ Arrêter";
-  button.classList.add("recording");
-  setStatus("Enregistrement en cours…");
+  all.forEach((c) => {
+    const item = el("button", "card history-item");
+    item.type = "button";
+    const meta = el("span", "card-meta", `${c.messages.length} messages · ${relativeDate(c.date)}`);
+    item.append(el("span", "", c.title || "Conversation"), meta);
+    item.addEventListener("click", () => openConversation(c));
+    list.append(item);
+  });
 }
 
-async function send() {
-  const form = new FormData();
-  form.append("audio", audioBlob, audioBlob.name || "question.wav");
-  if ($("hint").value) form.append("language_hint", $("hint").value);
+// ---------------------------------------------------------------- navigation
+function showView(name) {
+  ["chat", "history", "settings"].forEach((v) => ($(`view-${v}`).hidden = v !== name));
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
+  if (name === "history") renderHistory();
+  document.body.classList.toggle("in-conversation", name === "chat" && $("messages").children.length > 0);
+}
 
-  $("send-btn").disabled = true;
-  setStatus("Traitement…");
+// ---------------------------------------------------------------- état du moteur
+async function loadHealth() {
+  const pill = $("engine-pill");
   try {
-    const response = await fetch(`${API_BASE}/pipeline`, { method: "POST", body: form });
-    const body = await response.json();
-    if (!response.ok) {
-      setStatus(`Erreur : ${body.error?.message ?? response.status}`);
-      return;
-    }
-    showResult(body);
-    setStatus("");
+    const health = await api("/health");
+    pivotLanguage = health.pivot_language || "fra";
+    const mock = health.engine === "mock";
+    pill.className = `pill status ${mock ? "mock" : "ok"}`;
+    pill.textContent = mock ? "Mode test" : "En ligne";
+    pill.title = mock ? "Moteur factice : les réponses ne sont pas réelles" : `Moteur : ${health.engine}`;
+    $("engine-info").textContent = mock
+      ? "Mode test (mock) : les réponses sont factices, aucun modèle réel n'est chargé."
+      : `Moteur « ${health.engine} » — langue pivot : ${LANG_NAMES[pivotLanguage]}.`;
+    if (mock) $("eyebrow").textContent = "Baoulé · Dioula — mode test";
   } catch {
-    setStatus("API injoignable.");
-  } finally {
-    $("send-btn").disabled = false;
+    pill.className = "pill status down";
+    pill.textContent = "Hors ligne";
+    $("engine-info").textContent = "API injoignable.";
   }
 }
 
-function showResult(r) {
-  const d = r.detection;
-  $("r-lang").textContent = `${LANG_NAMES[d.language] ?? d.language} (confiance ${Math.round(d.confidence * 100)} %)`;
-  $("r-text").textContent = d.text;
-  $("r-qpivot").textContent = r.question_pivot;
-  $("r-apivot").textContent = r.answer_pivot;
-  $("r-answer").textContent = r.answer_text;
-  $("output-audio").src = `data:audio/wav;base64,${r.answer_audio_base64}`;
-  const total = Object.values(r.timings_ms).reduce((a, b) => a + b, 0);
-  $("r-timings").textContent =
-    `Temps de traitement : ${total.toFixed(0)} ms — ` +
-    Object.entries(r.timings_ms).map(([k, v]) => `${k} ${v.toFixed(0)} ms`).join(", ");
-  $("result").hidden = false;
-}
+// ---------------------------------------------------------------- initialisation
+function init() {
+  const hour = new Date().getHours();
+  $("greeting").textContent = hour >= 18 || hour < 5 ? "Bonsoir !" : "Bonjour !";
 
-async function showEngine() {
-  try {
-    const health = await (await fetch(`${API_BASE}/health`)).json();
-    if (health.engine === "mock") {
-      $("engine-banner").textContent =
-        "⚠️ Moteur de test (mock) : les réponses sont factices, aucun modèle réel n'est chargé.";
-      $("engine-banner").hidden = false;
+  const input = $("text-input");
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = `${input.scrollHeight}px`;
+    updateSendButton();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      $("composer").requestSubmit();
     }
-  } catch {
-    setStatus("API injoignable.");
-  }
+  });
+  $("composer").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    input.style.height = "auto";
+    sendText(text);
+  });
+
+  $("mic-btn").addEventListener("click", () =>
+    recording.recorder?.state === "recording" ? stopRecording() : startRecording(),
+  );
+  $("rec-cancel").addEventListener("click", () => stopRecording(true));
+  $("file-input").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) sendVoice(file, file.name);
+    e.target.value = "";
+  });
+
+  document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
+  $("new-chat").addEventListener("click", resetChat);
+
+  $("set-autoplay").checked = settings.autoplay;
+  $("set-textlang").value = settings.textLang;
+  $("set-autoplay").addEventListener("change", (e) => {
+    settings.autoplay = e.target.checked;
+    store.set(STORE_SETTINGS, settings);
+  });
+  $("set-textlang").addEventListener("change", (e) => {
+    settings.textLang = e.target.value;
+    store.set(STORE_SETTINGS, settings);
+  });
+  $("clear-history").addEventListener("click", () => {
+    if (!confirm("Effacer toutes les conversations enregistrées sur cet appareil ?")) return;
+    store.set(STORE_CONVERSATIONS, []);
+    renderHistory();
+    renderCards();
+  });
+
+  renderCards();
+  loadHealth();
 }
 
-$("record-btn").addEventListener("click", toggleRecording);
-$("file-input").addEventListener("change", (e) => {
-  if (e.target.files[0]) setInput(e.target.files[0]);
-});
-$("send-btn").addEventListener("click", send);
-showEngine();
+init();

@@ -14,6 +14,7 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
     engine: str
+    pivot_language: Language
 
 
 class LanguageInfo(BaseModel):
