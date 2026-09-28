@@ -184,6 +184,9 @@ function renderUserVoice(audioUrl) {
       sub.textContent = text;
       bubble.append(langTag(lang, ` · détecté (${Math.round(confidence * 100)} %)`));
     },
+    fail() {
+      sub.textContent = "Message non traité";
+    },
   };
 }
 
@@ -253,7 +256,7 @@ async function sendVoice(blob, filename = "question.wav") {
     remember("user", `🎙️ ${d.text}`, d.language);
     remember("bot", r.answer_text, d.language);
   } catch (error) {
-    userMsg.update("Transcription indisponible", $("lang").value || "bci", 0);
+    userMsg.fail();
     renderError(slot, error.message);
   } finally {
     setBusy(false);
