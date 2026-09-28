@@ -44,6 +44,12 @@ const store = {
 const settings = { autoplay: true, textLang: "bci", ...store.get(STORE_SETTINGS, {}) };
 let pivotLanguage = "fra";
 let lastLanguage = null; // dernière langue détectée : réutilisée pour les messages écrits
+let isMock = true;
+// Ce que le moteur sait réellement faire (fourni par /health). Par défaut : rien.
+let capabilities = { language_detection: false, languages: {} };
+
+const supportsLanguage = (code) => Boolean(capabilities.languages[code]?.full);
+const supportedLanguages = () => Object.keys(capabilities.languages).filter(supportsLanguage);
 let conversation = newConversation();
 let busy = false;
 
@@ -162,6 +168,16 @@ function addTyping() {
   const dots = el("div", "typing");
   dots.append(el("span"), el("span"), el("span"));
   bubble.append(dots);
+  if (!isMock) {
+    const hint = el("p", "sub", "");
+    bubble.append(hint);
+    // Sur un portable sans carte graphique, une réponse complète prend souvent 20 à 60 s.
+    setTimeout(() => {
+      hint.textContent =
+        "Les modèles tournent sur le processeur : la réponse peut prendre jusqu'à une minute " +
+        "(davantage la toute première fois, le temps de charger les modèles).";
+    }, 4000);
+  }
   return { msg, bubble };
 }
 
@@ -180,9 +196,10 @@ function renderUserVoice(audioUrl) {
   const sub = el("p", "sub", "Transcription en cours…");
   bubble.append(sub);
   return {
-    update(text, lang, confidence) {
+    update(text, lang, confidence, source) {
       sub.textContent = text;
-      bubble.append(langTag(lang, ` · détecté (${Math.round(confidence * 100)} %)`));
+      const suffix = source === "detected" ? ` · détecté (${Math.round(confidence * 100)} %)` : "";
+      bubble.append(langTag(lang, suffix));
     },
     fail() {
       sub.textContent = "Message non traité";
@@ -240,7 +257,7 @@ async function sendVoice(blob, filename = "question.wav") {
     const r = await api("/pipeline", { method: "POST", body: form });
     const d = r.detection;
     lastLanguage = d.language;
-    userMsg.update(d.text, d.language, d.confidence);
+    userMsg.update(d.text, d.language, d.confidence, d.language_source);
     renderBotAnswer(
       slot,
       {
@@ -267,7 +284,7 @@ async function sendVoice(blob, filename = "question.wav") {
 async function sendText(text) {
   if (busy || !text.trim()) return;
   setBusy(true);
-  const lang = $("lang").value || lastLanguage || settings.textLang;
+  const lang = $("lang").value || lastLanguage || defaultLanguage();
   renderUserText(text, lang);
   const slot = addTyping();
   const timings = {};
@@ -432,9 +449,15 @@ function renderCards() {
   const items = recent.length
     ? recent.map((c) => ({ title: c.title, meta: relativeDate(c.date), icon: ICONS.chat, action: () => openConversation(c) }))
     : [
-        { title: "Parler en Baoulé", meta: "Micro", icon: ICONS.mic, action: () => quickStart("bci") },
-        { title: "Parler en Dioula", meta: "Micro", icon: ICONS.mic, action: () => quickStart("dyu") },
-        { title: "Laisser l'assistant détecter la langue", meta: "Micro", icon: ICONS.mic, action: () => quickStart("") },
+        ...supportedLanguages().map((code) => ({
+          title: `Parler en ${LANG_NAMES[code]}`,
+          meta: "Micro",
+          icon: ICONS.mic,
+          action: () => quickStart(code),
+        })),
+        ...(capabilities.language_detection
+          ? [{ title: "Laisser l'assistant détecter la langue", meta: "Micro", icon: ICONS.mic, action: () => quickStart("") }]
+          : []),
         { title: "Écrire une question", meta: "Clavier", icon: ICONS.pen, action: () => $("text-input").focus() },
       ];
 
@@ -509,19 +532,55 @@ async function loadHealth() {
   try {
     const health = await api("/health");
     pivotLanguage = health.pivot_language || "fra";
+    capabilities = health.capabilities || capabilities;
     const mock = health.engine === "mock";
+    isMock = mock;
+    applyCapabilities();
     pill.className = `pill status ${mock ? "mock" : "ok"}`;
     pill.textContent = mock ? "Mode test" : "En ligne";
-    pill.title = mock ? "Moteur factice : les réponses ne sont pas réelles" : `Moteur : ${health.engine}`;
+    const models = Object.entries(health.models || {}).map(([task, name]) => `${task} : ${name}`).join(" · ");
+    pill.title = mock ? "Moteur factice : les réponses ne sont pas réelles" : models;
     $("engine-info").textContent = mock
       ? "Mode test (mock) : les réponses sont factices, aucun modèle réel n'est chargé."
-      : `Moteur « ${health.engine} » — langue pivot : ${LANG_NAMES[pivotLanguage]}.`;
-    if (mock) $("eyebrow").textContent = "Baoulé · Dioula — mode test";
+      : `Modèles réels — ${models}. Langue pivot : ${LANG_NAMES[pivotLanguage]}.`;
   } catch {
     pill.className = "pill status down";
     pill.textContent = "Hors ligne";
     $("engine-info").textContent = "API injoignable.";
   }
+}
+
+function defaultLanguage() {
+  if (supportsLanguage(settings.textLang)) return settings.textLang;
+  return supportedLanguages()[0] || settings.textLang;
+}
+
+// Adapte l'interface à ce que le moteur sait faire : pas d'option « Détection auto » sans
+// détection, et les langues sans modèle sont affichées « bientôt » mais non sélectionnables.
+function applyCapabilities() {
+  const fill = (select, withAuto) => {
+    const previous = select.value;
+    select.replaceChildren();
+    if (withAuto && capabilities.language_detection) select.append(new Option("Détection auto", ""));
+    Object.keys(capabilities.languages).forEach((code) => {
+      const available = supportsLanguage(code);
+      const option = new Option(available ? LANG_NAMES[code] : `${LANG_NAMES[code]} — bientôt`, code);
+      option.disabled = !available;
+      select.append(option);
+    });
+    const values = [...select.options].filter((o) => !o.disabled).map((o) => o.value);
+    select.value = values.includes(previous) ? previous : values[0] ?? "";
+  };
+  fill($("lang"), true);
+  fill($("set-textlang"), false);
+  $("set-textlang").value = defaultLanguage();
+
+  const available = supportedLanguages().map((c) => LANG_NAMES[c]);
+  const missing = Object.keys(capabilities.languages).filter((c) => !supportsLanguage(c)).map((c) => LANG_NAMES[c]);
+  $("eyebrow").textContent =
+    (available.join(" · ") || "Aucune langue disponible") +
+    (isMock ? " — mode test" : missing.length ? ` — ${missing.join(", ")} en préparation` : "");
+  renderCards();
 }
 
 // ---------------------------------------------------------------- initialisation

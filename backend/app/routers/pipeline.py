@@ -58,6 +58,7 @@ async def pipeline(
             text=detected.text,
             language=detected.language,
             confidence=detected.confidence,
+            language_source=detected.language_source,
             engine=engines.recognizer.name,
         ),
         pivot_language=pivot,

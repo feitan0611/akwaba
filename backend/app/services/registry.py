@@ -1,10 +1,14 @@
 """Assemblage des briques IA selon la configuration (LANGCI_ENGINE)."""
 
+import logging
 from dataclasses import dataclass
 
 from app.config import Settings
+from app.languages import LOCAL_LANGUAGES
 from app.services.base import Responder, SpeechRecognizer, SpeechSynthesizer, Translator
 from app.services.mock import MockResponder, MockSpeechRecognizer, MockSpeechSynthesizer, MockTranslator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -13,6 +17,33 @@ class Engines:
     translator: Translator
     responder: Responder
     synthesizer: SpeechSynthesizer
+    pivot_language: str
+
+    @property
+    def bricks(self) -> tuple:
+        return (self.recognizer, self.translator, self.responder, self.synthesizer)
+
+    def capabilities(self) -> dict:
+        """Ce que le moteur sait réellement faire, langue par langue (exposé par /health)."""
+        pivot = self.pivot_language
+        languages = {}
+        for code in LOCAL_LANGUAGES:
+            support = {
+                "stt": code in self.recognizer.languages,
+                "translate": code in self.translator.languages and pivot in self.translator.languages,
+                "ask": pivot in self.responder.languages,
+                "tts": code in self.synthesizer.languages,
+            }
+            languages[code] = {**support, "full": all(support.values())}
+        return {"language_detection": self.recognizer.detects_language, "languages": languages}
+
+    def warmup(self) -> None:
+        """Charge tous les modèles (appelé en tâche de fond au démarrage si demandé)."""
+        for brick in self.bricks:
+            try:
+                brick.warmup()
+            except Exception:  # un échec ici ne doit pas empêcher le serveur de tourner
+                logger.exception("Échec du préchargement de %s", brick.name)
 
 
 def build_engines(settings: Settings) -> Engines:
@@ -22,6 +53,17 @@ def build_engines(settings: Settings) -> Engines:
             translator=MockTranslator(),
             responder=MockResponder(),
             synthesizer=MockSpeechSynthesizer(),
+            pivot_language=settings.pivot_language,
         )
-    # Les vrais moteurs seront ajoutés ici après le benchmark (voir docs/05-strategie-ml.md).
-    raise ValueError(f"Moteur IA inconnu : {settings.engine!r}")
+    if settings.engine == "local":
+        # Import ici : le module ne charge aucun modèle, mais inutile de l'importer en mode mock.
+        from app.services.local import MMSSpeechRecognizer, MMSSpeechSynthesizer, NLLBTranslator, OllamaResponder
+
+        return Engines(
+            recognizer=MMSSpeechRecognizer(),
+            translator=NLLBTranslator(),
+            responder=OllamaResponder(settings.ollama_url, settings.ollama_model),
+            synthesizer=MMSSpeechSynthesizer(),
+            pivot_language=settings.pivot_language,
+        )
+    raise ValueError(f"Moteur IA inconnu : {settings.engine!r} (valeurs possibles : mock, local)")

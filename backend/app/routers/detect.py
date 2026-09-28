@@ -27,5 +27,6 @@ async def detect(
         text=result.text,
         language=result.language,
         confidence=result.confidence,
+        language_source=result.language_source,
         engine=engines.recognizer.name,
     )

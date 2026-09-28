@@ -22,6 +22,13 @@ mesuré ce que donnent les modèles pré-entraînés existants.
 
 Le benchmark est consigné dans `ml/notebooks/01_benchmark.ipynb` et résumé dans un ADR.
 
+### Résultat de la vérification (28/09/2026)
+
+Voir [ADR 0003](adr/0003-choix-des-modeles.md). En résumé : **le Dioula est couvert par toutes
+les briques** (MMS-LID, MMS-1B-all, NLLB-200, MMS-TTS) ; **le Baoulé n'est couvert que par la
+détection de langue**. Toutes ces ressources sont sous licence **non commerciale**.
+Ces modèles sont intégrés dans le moteur `local` (`backend/app/services/local.py`).
+
 ## 3. Baselines (point de comparaison obligatoire)
 
 | Brique | Baseline proposée |

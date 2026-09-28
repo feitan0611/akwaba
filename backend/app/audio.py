@@ -10,6 +10,8 @@ Seuls les formats WAV et MP3 sont acceptés ; le format est vérifié sur le con
 
 import base64
 import binascii
+import io
+import wave
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -126,3 +128,14 @@ async def read_audio_input(request: Request, max_bytes: int) -> AudioInput:
         raise APIError(422, "invalid_language_hint", "language_hint doit valoir 'bci' ou 'dyu'.")
 
     return AudioInput(data=data, format=validate_audio(data, max_bytes), options=options)
+
+
+def pcm16_to_wav(frames: bytes, sample_rate: int) -> bytes:
+    """Emballe des échantillons PCM 16 bits mono dans un fichier WAV."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(frames)
+    return buffer.getvalue()

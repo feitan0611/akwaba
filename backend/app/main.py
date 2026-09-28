@@ -6,6 +6,7 @@ Démonstrateur :                           http://127.0.0.1:8000/demo/
 """
 
 import logging
+import threading
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -39,7 +40,8 @@ Prototype d'API de traitement vocal du **Baoulé** (`bci`) et du **Dioula** (`dy
 Flux principal (`/pipeline`) : audio → détection + transcription → traduction vers la langue
 pivot → LLM → traduction retour → synthèse vocale.
 
-⚠️ Lorsque `engine` vaut `mock`, les réponses sont factices (aucun modèle réel n'est chargé).
+Moteurs : `mock` (réponses factices, pour le développement) ou `local` (vrais modèles open source).
+Consultez `GET /api/v1/health` → `capabilities` pour savoir ce qui est disponible pour chaque langue.
 """
 
 
@@ -50,6 +52,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=settings.app_name, version=__version__, description=DESCRIPTION)
     app.state.settings = settings
     app.state.engines = build_engines(settings)
+    if settings.preload_models:
+        # En tâche de fond : le serveur répond tout de suite ; les requêtes attendront le chargement.
+        threading.Thread(target=app.state.engines.warmup, name="warmup", daemon=True).start()
 
     app.add_middleware(
         CORSMiddleware,

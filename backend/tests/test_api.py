@@ -178,3 +178,15 @@ def test_demo_is_served_without_stale_cache():
     response = demo_client.get("/demo/")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+
+
+def test_unreadable_json_body_uses_unified_error_format(client):
+    # « café » encodé en Latin-1 (0xE9) : ce n'est pas de l'UTF-8 valide.
+    body = '{"text": "café"}'.encode("latin-1")
+    response = client.post(f"{API}/ask", content=body, headers={"content-type": "application/json"})
+    assert response.status_code in (400, 422)
+    assert "error" in response.json() and "detail" not in response.json()
+
+
+def test_unknown_route_uses_unified_error_format(client):
+    assert_error(client.get(f"{API}/inexistant"), 404, "not_found")

@@ -4,6 +4,7 @@ Aucun secret ne doit être écrit en dur dans le code : voir .env.example.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -14,12 +15,21 @@ class Settings(BaseSettings):
     app_name: str = "API Langues Ivoiriennes (Baoulé / Dioula)"
     environment: str = "dev"
 
-    # Moteur IA utilisé derrière l'API. "mock" = implémentations factices pour développer
-    # l'API et le frontend avant que les modèles soient prêts.
-    engine: str = "mock"
+    # Moteur IA utilisé derrière l'API :
+    #   "mock"  = implémentations factices (développement, tests, CI)
+    #   "local" = vrais modèles sur la machine (voir app/services/local.py)
+    engine: Literal["mock", "local"] = "mock"
+
+    # Moteur local : charger les modèles dès le démarrage (en tâche de fond) plutôt qu'à la
+    # première requête. Le premier chargement peut prendre plusieurs minutes.
+    preload_models: bool = False
+
+    # LLM servi par Ollama (moteur local)
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:3b"
 
     # Langue pivot utilisée par le LLM (le LLM ne comprend pas le Baoulé/Dioula directement).
-    pivot_language: str = "fra"
+    pivot_language: Literal["fra", "eng"] = "fra"
 
     max_audio_mb: float = 10.0
 

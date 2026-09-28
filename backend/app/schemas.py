@@ -10,11 +10,26 @@ from app.languages import Language, LocalLanguage
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
 
 
+class LanguageSupport(BaseModel):
+    stt: bool
+    translate: bool
+    ask: bool
+    tts: bool
+    full: bool = Field(description="Chaîne complète audio → audio disponible")
+
+
+class Capabilities(BaseModel):
+    language_detection: bool = Field(description="Détection automatique de la langue disponible")
+    languages: dict[str, LanguageSupport]
+
+
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
     engine: str
     pivot_language: Language
+    models: dict[str, str] = Field(description="Modèle utilisé par chaque brique")
+    capabilities: Capabilities
 
 
 class LanguageInfo(BaseModel):
@@ -27,6 +42,9 @@ class DetectResponse(BaseModel):
     text: str = Field(description="Texte transcrit")
     language: LocalLanguage = Field(description="Langue détectée (ISO 639-3)")
     confidence: float = Field(ge=0, le=1, description="Score de confiance de la détection")
+    language_source: Literal["detected", "provided"] = Field(
+        description="detected : langue détectée par le modèle ; provided : fournie par le client (language_hint)"
+    )
     engine: str
 
 
